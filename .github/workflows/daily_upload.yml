@@ -1,0 +1,61 @@
+name: Velocity Spanish Podcast - Daily Upload
+
+on:
+  schedule:
+    - cron: '0 5 * * *'  # 12:00 AM EST (5:00 AM UTC)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  generate-and-upload:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ⬇️ Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 📦 Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-dejavu-core fonts-liberation fonts-noto-color-emoji
+          sudo fc-cache -fv
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🔐 Create .env
+        run: |
+          echo "POLLINATIONS_API_KEY=${{ secrets.POLLINATIONS_API_KEY }}" >> .env
+          echo "AI_MODEL=${{ secrets.AI_MODEL || 'openai' }}" >> .env
+          echo "YT_CLIENT_ID=${{ secrets.YT_CLIENT_ID }}" >> .env
+          echo "YT_CLIENT_SECRET=${{ secrets.YT_CLIENT_SECRET }}" >> .env
+          echo "YT_REFRESH_TOKEN=${{ secrets.YT_REFRESH_TOKEN }}" >> .env
+
+      - name: 🎬 Generate podcast
+        run: python podcast_generator.py
+
+      - name: 📺 Upload to YouTube
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: |
+          export PYTHONPATH="${{ github.workspace }}:$PYTHONPATH"
+          python upload_to_youtube.py
+
+      - name: 📤 Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: podcast-video-${{ github.run_number }}
+          path: |
+            output/podcast_*/podcast_final.mp4
+            output/podcast_*/thumbnail.jpg
+          retention-days: 7
