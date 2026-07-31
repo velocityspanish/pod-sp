@@ -16,7 +16,7 @@ AI_MODEL = os.getenv("AI_MODEL") or "openai"
 
 BASE_DIR = Path(__file__).parent
 OUTPUT_DIR = BASE_DIR / "output"
-FONTS_DIR = Path(__file__).parent.parent.parent / "Velocity Spanish" / "fonts"
+FONTS_DIR = BASE_DIR / "fonts"
 
 HOST1_VOICE = "es-ES-ElviraNeural"
 HOST2_VOICE = "es-ES-AlvaroNeural"
@@ -254,15 +254,41 @@ LIGHT_GRAY = (170, 180, 205)
 DARK_LINE = (50, 55, 75)
 
 def load_font(size, bold=False, italic=False):
+    # Font paths that exist on Windows (local) AND Linux (GitHub Actions runner).
+    # The workflow installs fonts-dejavu-core + fonts-liberation via apt.
     fonts_to_try = []
     if italic and bold:
-        fonts_to_try.extend(["C:/Windows/Fonts/segoeuiz.ttf", "C:/Windows/Fonts/arialbi.ttf", str(FONTS_DIR / "DejaVuSans-BoldOblique.ttf")])
+        fonts_to_try.extend([
+            "C:/Windows/Fonts/segoeuiz.ttf", "C:/Windows/Fonts/arialbi.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-BoldItalic.ttf",
+            str(FONTS_DIR / "DejaVuSans-BoldOblique.ttf"),
+        ])
     elif italic:
-        fonts_to_try.extend(["C:/Windows/Fonts/segoeuii.ttf", "C:/Windows/Fonts/ariali.ttf", str(FONTS_DIR / "DejaVuSans-Oblique.ttf")])
+        fonts_to_try.extend([
+            "C:/Windows/Fonts/segoeuii.ttf", "C:/Windows/Fonts/ariali.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Italic.ttf",
+            str(FONTS_DIR / "DejaVuSans-Oblique.ttf"),
+        ])
     elif bold:
-        fonts_to_try.extend(["C:/Windows/Fonts/Inter-Bold-slnt=0.ttf", "C:/Windows/Fonts/segoeuib.ttf", "C:/Windows/Fonts/arialbd.ttf", str(FONTS_DIR / "DejaVuSans-Bold.ttf")])
+        fonts_to_try.extend([
+            "C:/Windows/Fonts/Inter-Bold-slnt=0.ttf", "C:/Windows/Fonts/segoeuib.ttf",
+            "C:/Windows/Fonts/arialbd.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+            str(FONTS_DIR / "DejaVuSans-Bold.ttf"),
+        ])
     else:
-        fonts_to_try.extend(["C:/Windows/Fonts/Inter-Regular-slnt=0.ttf", "C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/arial.ttf", str(FONTS_DIR / "DejaVuSans.ttf")])
+        fonts_to_try.extend([
+            "C:/Windows/Fonts/Inter-Regular-slnt=0.ttf", "C:/Windows/Fonts/segoeui.ttf",
+            "C:/Windows/Fonts/arial.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+            str(FONTS_DIR / "DejaVuSans.ttf"),
+        ])
 
     for p in fonts_to_try:
         if Path(p).exists():
