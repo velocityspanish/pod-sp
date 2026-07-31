@@ -646,21 +646,11 @@ async def main():
     except Exception as e:
         print(f"  Thumbnail warn: {e}")
 
-    title = f"Spanish Podcast | {topic_es} | Learn Spanish Naturally"
-    description = (
-        f"🎙️ Bienvenidos a Velocity Spanish Podcast!\n\n"
-        f"En este episodio hablamos sobre: {topic_es} ({topic_en}).\n\n"
-        f"Conversación bilingüe a nivel A2 entre Carlos y Maria.\n"
-        f"Escucha, repite y aprende español de forma natural.\n\n"
-        f"📚 WHAT YOU'LL LEARN:\n"
-        f"• {len(turns)} frases y expresiones útiles en español\n"
-        f"• Pronunciación natural con hablantes nativos\n"
-        f"• Vocabulario práctico para la vida diaria\n\n"
-        f"🔔 Subscribe for daily Spanish lessons!\n\n"
-        f"#LearnSpanish #Spanish #SpanishPodcast #AprenderEspañol #SpanishLesson"
-    )
+    title = build_podcast_title(topic_es, topic_en)
+    description = build_podcast_description(topic_es, topic_en, len(turns), round(duration / 60, 1))
     tags = ["Learn Spanish", "Spanish", "Spanish Podcast", "Aprender Español", "Spanish Lesson",
-            "Spanish for Beginners", "Bilingual", topic_es, "Velocity Spanish"]
+            "Spanish for Beginners", "Bilingual", "Spanish Listening", "Spanish Conversation",
+            "Spanish Vocabulary", topic_es, "Velocity Spanish"]
 
     meta_out = {
         "title": title,
@@ -687,6 +677,41 @@ async def main():
     print(f"  Duration: {duration/60:.1f} min ({len(turns)} turns)")
     print(f"  Video: {video_path.name}")
     print("=" * 60)
+
+
+def build_podcast_title(topic_es, topic_en):
+    """Build a clean, keyword-rich title for the episode."""
+    titles = [
+        f"Spanish Podcast: {topic_es} | Aprende Español",
+        f"{topic_es} | Spanish Conversation for Beginners",
+        f"Learn Spanish: {topic_es} | Bilingual Podcast",
+        f"{topic_es} | Practica Tu Español con Carlos y María",
+    ]
+    return random.choice(titles)
+
+
+def build_podcast_description(topic_es, topic_en, turns_count, duration_min):
+    """Build a rich, careful description with episode info and learning value."""
+    description = (
+        f"🎙️ ¡Bienvenidos a Velocity Spanish Podcast!\n\n"
+        f"En este episodio, Carlos y María conversan sobre: {topic_es} ({topic_en}).\n"
+        f"Una conversación bilingüe y relajada, a nivel A2, para que aprendas español de forma natural.\n\n"
+        f"✨ WHAT'S INSIDE THIS EPISODE:\n"
+        f"• {turns_count} frases y expresiones útiles en español\n"
+        f"• Conversación real con vocabulario cotidiano\n"
+        f"• Pronunciación natural de hablantes nativos\n"
+        f"• Traducción al inglés en cada línea\n\n"
+        f"📌 HOW TO USE THIS PODCAST:\n"
+        f"1️⃣ Escucha la parte en español e intenta entenderla\n"
+        f"2️⃣ Comprueba la traducción al inglés\n"
+        f"3️⃣ Repite las frases en voz alta\n"
+        f"4️⃣ Vuelve a escuchar mañana - ¡cada día es más fácil!\n\n"
+        f"🔔 Subscribe para una nueva lección cada día.\n\n"
+        f"📅 Duración: {duration_min} minutos\n\n"
+        f"#LearnSpanish #SpanishPodcast #AprenderEspañol #SpanishForBeginners "
+        f"#SpanishListening #SpanishConversation #Bilingual"
+    )
+    return description
 
 if __name__ == "__main__":
     try:
