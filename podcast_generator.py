@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 load_dotenv()
 
-POLLINATIONS_API_KEY = os.getenv("POLLINATIONS_API_KEY") or "sk_K98O2j1UlpALX9TBAoAuEdqxL1hpB7zh"
+POLLINATIONS_API_KEY = os.getenv("POLLINATIONS_API_KEY", "")
 AI_MODEL = os.getenv("AI_MODEL") or "openai"
 
 BASE_DIR = Path(__file__).parent
