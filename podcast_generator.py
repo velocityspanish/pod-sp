@@ -160,8 +160,28 @@ Return EXACTLY {batch_size} turns as a JSON array (no markdown):
             print(f"  Batch attempt {attempt+1} failed: {e}")
     return None
 
+def _generate_topic():
+    """Have the AI invent a brand-new random topic (unlimited variety).
+    Returns '<topic - English>' or None on failure (caller falls back to TOPICS)."""
+    seed = random.randint(100000, 999999)
+    try:
+        resp = requests.post("https://gen.pollinations.ai/v1/chat/completions", json={
+            "model": AI_MODEL,
+            "messages": [
+                {"role": "system", "content": "You invent fresh, interesting, everyday topics for a Spanish/English A2 learning podcast. Always pick something new and varied from all areas of daily life, as a SHORT noun phrase (2-5 words), NOT a full sentence."},
+                {"role": "user", "content": f"Create EXACTLY ONE brand-new topic (uniqueness seed {seed}) for a Spanish/English A2 podcast. Return ONLY one line in this exact format: <topic in Spanish> - <topic in English>. The first part must be a short noun phrase in Spanish. No numbering, no bullets, no extra text."}
+            ],
+            "temperature": 1.1,
+        }, headers={"Authorization": f"Bearer {POLLINATIONS_API_KEY}"}, timeout=60)
+        resp.raise_for_status()
+        content = resp.json()["choices"][0]["message"]["content"].strip().strip('"').strip()
+        if content and " - " in content:
+            return content
+    except Exception as e:
+        print(f"  Topic generation failed: {e}")
+    return None
 def generate_script():
-    topic = random.choice(TOPICS)
+    topic = _generate_topic() or random.choice(TOPICS)
     topic_es = topic.split(" - ")[0]
     topic_en = topic.split(" - ")[1]
 
