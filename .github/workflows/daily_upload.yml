@@ -38,6 +38,8 @@ jobs:
           echo "YT_CLIENT_ID=${{ secrets.YT_CLIENT_ID }}" >> .env
           echo "YT_CLIENT_SECRET=${{ secrets.YT_CLIENT_SECRET }}" >> .env
           echo "YT_REFRESH_TOKEN=${{ secrets.YT_REFRESH_TOKEN }}" >> .env
+          echo "FACEBOOK_ACCESS_TOKEN=${{ secrets.FACEBOOK_ACCESS_TOKEN }}" >> .env
+          echo "FACEBOOK_PAGE_ID=${{ secrets.FACEBOOK_PAGE_ID }}" >> .env
 
       - name: Generate podcast
         run: python podcast_generator.py
@@ -52,6 +54,17 @@ jobs:
           python upload_to_youtube.py
           python set_channel_description.py
 
+            - name: 📘 Upload to Facebook Page
+        continue-on-error: true
+        env:
+          FACEBOOK_ACCESS_TOKEN: ${{ secrets.FACEBOOK_ACCESS_TOKEN }}
+          FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
+        run: |
+          export PYTHONPATH="${{ github.workspace }}:$PYTHONPATH"
+          if [ -f "upload_to_facebook.py" ]; then
+            python upload_to_facebook.py
+          fi
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -59,4 +72,6 @@ jobs:
           path: |
             output/podcast_*/podcast_final.mp4
             output/podcast_*/thumbnail.jpg
+            output/podcast_*/facebook_upload_result.json
+            output/latest_upload_info.json
           retention-days: 7
