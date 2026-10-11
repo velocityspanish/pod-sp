@@ -4,6 +4,16 @@ on:
   schedule:
     - cron: '0 5 * * *'
   workflow_dispatch:
+    inputs:
+      upload_youtube:
+        description: 'Upload to YouTube? (auto = alternate days, true = force upload, false = skip)'
+        required: false
+        default: 'auto'
+        type: choice
+        options:
+          - auto
+          - 'true'
+          - 'false'
 
 permissions:
   contents: write
@@ -49,7 +59,33 @@ jobs:
           AI_MODEL: ${{ secrets.AI_MODEL || 'openai' }}
         run: python podcast_generator.py
 
+      - name: 📅 Check YouTube upload schedule (Alternate days)
+        id: yt_schedule
+        run: |
+          INPUT_CHOICE="${{ github.event.inputs.upload_youtube }}"
+          if [ "$INPUT_CHOICE" = "true" ]; then
+            echo "should_upload=true" >> "$GITHUB_OUTPUT"
+            echo "Manual override: YouTube upload forced to TRUE."
+          elif [ "$INPUT_CHOICE" = "false" ]; then
+            echo "should_upload=false" >> "$GITHUB_OUTPUT"
+            echo "Manual override: YouTube upload forced to FALSE."
+          else
+            # Alternate-day schedule based on UTC Day of the Year
+            # Odd days (e.g. 283, 285...) = Upload to YouTube
+            # Even days (e.g. 284, 286...) = Skip YouTube (1-day gap)
+            DAY_OF_YEAR=$(date -u +%-j)
+            echo "Current UTC Day of Year: $DAY_OF_YEAR"
+            if [ $(( 10#$DAY_OF_YEAR % 2 )) -ne 0 ]; then
+              echo "should_upload=true" >> "$GITHUB_OUTPUT"
+              echo "✅ Today is a scheduled YouTube upload day (Day $DAY_OF_YEAR)."
+            else
+              echo "should_upload=false" >> "$GITHUB_OUTPUT"
+              echo "⏸️ Today is an alternate off-day for YouTube (Day $DAY_OF_YEAR). Skipping YouTube upload (Facebook will still upload)."
+            fi
+          fi
+
       - name: Upload to YouTube
+        if: steps.yt_schedule.outputs.should_upload == 'true'
         env:
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
