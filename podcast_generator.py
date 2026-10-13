@@ -539,6 +539,22 @@ def generate_script():
     return all_turns, topic_es, topic_en
 
 
+def configure_edge_tts():
+    """Ensure edge_tts connects to Microsoft's active endpoint to avoid 403 on cloud runners."""
+    try:
+        import edge_tts.constants
+        import edge_tts.communicate
+        token = getattr(edge_tts.constants, "TRUSTED_CLIENT_TOKEN", "6A5AA1D4EAFF4E9FB37E23D68491D6F4")
+        new_url = (
+            "wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1"
+            f"?Ocp-Apim-Subscription-Key={token}"
+        )
+        edge_tts.constants.WSS_URL = new_url
+        edge_tts.communicate.WSS_URL = new_url
+    except Exception as e:
+        pass
+
+
 def generate_google_tts(text: str, voice_or_lang: str, output_path: str) -> bool:
     """Fallback TTS using Google Translate TTS if Edge TTS fails."""
     import urllib.request
