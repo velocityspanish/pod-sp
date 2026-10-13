@@ -206,21 +206,32 @@ def parse_video_metadata(video_info: dict):
             safe_print(f"[Facebook] Notice: Could not read metadata: {e}")
 
     # Try reading info_file
-    if not description and video_info.get("info") and Path(video_info["info"]).exists():
+    if (not description or not title or title == "Language Learning Video") and video_info.get("info") and Path(video_info["info"]).exists():
         try:
             with open(video_info["info"], "r", encoding="utf-8") as f:
                 content = f.read()
-                if "SELECTED TITLE" in content and not video_info.get("direct_title"):
-                    title_part = content.split("SELECTED TITLE")[1].split("---")[1].strip()
-                    title = title_part.splitlines()[0].strip()
-                if "VIDEO DESCRIPTION:" in content:
-                    description = content.split("VIDEO DESCRIPTION:")[1].split("---")[1].strip()
+            import re
+            if not title or title == "Language Learning Video":
+                m_title = re.search(r"SELECTED TITLE[^\n]*\n[-=\s]+(.+?)(?:\n\s*[-=]{10,}|\Z)", content, re.DOTALL)
+                if m_title:
+                    cand = m_title.group(1).strip().splitlines()[0].strip()
+                    if cand:
+                        title = cand
+            if not description:
+                m_desc = re.search(r"VIDEO DESCRIPTION:[^\n]*\n[-=\s]+(.+?)(?:\n\s*={10,}|\Z)", content, re.DOTALL)
+                if m_desc:
+                    description = m_desc.group(1).strip()
         except Exception as e:
             safe_print(f"[Facebook] Notice: Could not read youtube_upload_info.txt: {e}")
 
-    if not description:
-        description = f"{title}\n\nLearn and practice daily with Velocity Language Lessons.\nSubscribe for daily educational videos!"
-
+    if not description or len(description.strip()) < 20:
+        description = (
+            f"🎙️ {title}\n\n"
+            f"Tune in to today's bilingual language podcast! Master pronunciation, listening comprehension, and everyday conversation.\n\n"
+            f"🔔 Follow & Subscribe for daily podcast episodes!\n"
+            f"#Podcast #LanguageLearning #Bilingual #ListeningPractice #DailyLesson"
+        )
+    
     if len(description) > 5000:
         description = description[:4950] + "\n\n..."
 
