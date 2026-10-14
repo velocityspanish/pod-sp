@@ -601,6 +601,7 @@ def generate_google_tts(text: str, voice_or_lang: str, output_path: str) -> bool
 
 
 async def generate_audio(turns, target_dir=None):
+    configure_edge_tts()
     import edge_tts
     audio_dir = Path(target_dir) if target_dir else OUTPUT_DIR
     audio_dir.mkdir(parents=True, exist_ok=True)
@@ -608,20 +609,35 @@ async def generate_audio(turns, target_dir=None):
     for i, turn in enumerate(turns):
         voice = HOST1_VOICE if turn["speaker"] == "Host1" else HOST2_VOICE
         filename = audio_dir / f"audio_{i:03d}.mp3"
-        spoken_text = re.sub(r'\*\*(.*?)\*\*', r'\1', turn["spanish"])
+        spoken_text = re.sub(r"\*\*(.*?)\*\*", r"\1", turn["spanish"])
         # Split long sentences at commas for natural TTS pauses, then pause at sentence endings
         paused_text = spoken_text.replace(', ', '. ').replace('. ', '... ').replace('?... ', '?... ').replace('!... ', '!... ')
-        try:
-            communicate = edge_tts.Communicate(paused_text, voice)
-            await communicate.save(str(filename))
+        success = False
+        for attempt in range(3):
+            try:
+                configure_edge_tts()
+                communicate = edge_tts.Communicate(paused_text, voice)
+                await communicate.save(str(filename))
+                if Path(filename).exists() and Path(filename).stat().st_size > 100:
+                    success = True
+                    break
+            except Exception as e:
+                print(f"  Audio {i} attempt {attempt+1}/3 failed: {e}")
+                if attempt < 2:
+                    await asyncio.sleep(1.0)
+        if not success:
+            if generate_google_tts(paused_text, voice, str(filename)):
+                print(f"  Audio {i} recovered with Google TTS fallback")
+                success = True
+        if success:
             try:
                 r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                     "-of", "default=noprint_wrappers=1:nokey=1", str(filename)], capture_output=True, text=True)
                 duration = float(r.stdout.strip()) if r.stdout else 3.0
             except:
                 duration = 3.0
-        except Exception as e:
-            print(f"  Audio {i} failed: {e}")
+        else:
+            print(f"  Audio {i} failed all TTS attempts, using fallback")
             subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono", "-t", "3", str(filename)], capture_output=True)
             duration = 3.0
         audio_files.append({"path": str(filename), "duration": duration, "speaker": turn["speaker"]})
