@@ -555,7 +555,36 @@ def configure_edge_tts():
         pass
 
 
-def generate_google_tts(text: str, voice_or_lang: str, output_path: str) -> bool:
+def _fallback_sample_rate(mp3_path):
+    try:
+        r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0",
+                            "-show_entries", "stream=sample_rate",
+                            "-of", "default=noprint_wrappers=1:nokey=1", str(mp3_path)],
+                           capture_output=True, text=True)
+        return int((r.stdout or "24000").strip().split()[0])
+    except Exception:
+        return 24000
+
+
+def _masculinize_fallback_audio(mp3_path) -> None:
+    """Pitch-shift fallback audio down so the male host stays distinct."""
+    try:
+        rate = _fallback_sample_rate(mp3_path)
+        tmp = str(mp3_path) + ".male.mp3"
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-i", str(mp3_path),
+             "-af", f"asetrate={int(rate * 0.85)},aresample={rate}",
+             "-b:a", "128k", tmp],
+            capture_output=True)
+        if r.returncode == 0 and Path(tmp).exists() and Path(tmp).stat().st_size > 100:
+            os.replace(tmp, mp3_path)
+        else:
+            Path(tmp).unlink(missing_ok=True)
+    except Exception as e:
+        print(f"  masculinize fallback warn: {e}")
+
+
+def generate_google_tts(text, voice_or_lang, output_path, speaker="Host1"):
     """Fallback TTS using Google Translate TTS if Edge TTS fails."""
     import urllib.request
     import urllib.parse
@@ -594,6 +623,8 @@ def generate_google_tts(text: str, voice_or_lang: str, output_path: str) -> bool
         if len(data) > 200:
             with open(output_path, "wb") as f:
                 f.write(data)
+            if speaker == "Host2":
+                _masculinize_fallback_audio(output_path)
             return True
     except Exception as e:
         print(f"  Google TTS fallback error ({lang_code}): {e}")
@@ -613,11 +644,24 @@ async def generate_audio(turns, target_dir=None):
         # Split long sentences at commas for natural TTS pauses, then pause at sentence endings
         paused_text = spoken_text.replace(', ', '. ').replace('. ', '... ').replace('?... ', '?... ').replace('!... ', '!... ')
         success = False
+        word_boundaries = []
+        engine = "edge"
         for attempt in range(3):
             try:
                 configure_edge_tts()
-                communicate = edge_tts.Communicate(paused_text, voice)
-                await communicate.save(str(filename))
+                communicate = edge_tts.Communicate(paused_text, voice, boundary="WordBoundary")
+                _bounds = []
+                _chunks = bytearray()
+                async for _c in communicate.stream():
+                    _t = _c.get("type")
+                    if _t == "audio":
+                        _chunks.extend(_c.get("data", b""))
+                    elif _t == "WordBoundary":
+                        _bounds.append({"offset": _c["offset"] / 10_000_000, "duration": _c["duration"] / 10_000_000, "text": _c.get("text", "")})
+                if _chunks:
+                    with open(str(filename), "wb") as _f:
+                        _f.write(_chunks)
+                word_boundaries = list(_bounds)
                 if Path(filename).exists() and Path(filename).stat().st_size > 100:
                     success = True
                     break
@@ -626,7 +670,8 @@ async def generate_audio(turns, target_dir=None):
                 if attempt < 2:
                     await asyncio.sleep(1.0)
         if not success:
-            if generate_google_tts(paused_text, voice, str(filename)):
+            if generate_google_tts(paused_text, voice, str(filename), speaker=turn["speaker"]):
+                engine = "google-fallback"
                 print(f"  Audio {i} recovered with Google TTS fallback")
                 success = True
         if success:
@@ -638,9 +683,12 @@ async def generate_audio(turns, target_dir=None):
                 duration = 3.0
         else:
             print(f"  Audio {i} failed all TTS attempts, using fallback")
+            engine = "silence"
             subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono", "-t", "3", str(filename)], capture_output=True)
             duration = 3.0
-        audio_files.append({"path": str(filename), "duration": duration, "speaker": turn["speaker"]})
+        audio_files.append({"path": str(filename), "duration": duration, "speaker": turn["speaker"], "voice": voice, "engine": engine, "word_boundaries": word_boundaries})
+        if (i + 1) % 25 == 0 or i == 0:
+            print(f"  Audio {i} [{turn['speaker']}/{voice}] via {engine}: {duration:.1f}s, {len(word_boundaries)} bounds")
         if (i + 1) % 25 == 0:
             print(f"  Audio {i+1}/{len(turns)}")
     return audio_files
@@ -951,7 +999,7 @@ def create_frame(turn, output_path, frame_num=0):
                 tmp_lines[-1] = tmp_lines[-1].rstrip() + "..."
         final_lines = tmp_lines
         spanish_text = " ".join(final_lines)
-    draw_rich_text_centered(draw, spanish_text, center_y=440, font=chosen_font, max_w=1550, line_height=chosen_lh)
+    draw_rich_text_centered(draw, spanish_text, center_y=418, font=chosen_font, max_w=1550, line_height=chosen_lh)
 
     # === CENTER DIVIDER WITH DOT ===
     div_y = 615
@@ -960,7 +1008,7 @@ def create_frame(turn, output_path, frame_num=0):
 
     # === ENGLISH TRANSLATION (ITALIC, WRAPPED, LARGER) ===
     english_text = turn.get("english", "")
-    draw_english_translation(draw, english_text, center_y=715, font=f_english, max_w=1350, line_height=52)
+    draw_english_translation(draw, english_text, center_y=738, font=f_english, max_w=1350, line_height=52)
 
     # === BOTTOM FOOTER ===
     draw.line([(0, 975), (VIDEO_WIDTH, 975)], fill=YELLOW, width=2)
@@ -993,6 +1041,117 @@ def _wrap(draw, text, font, max_w):
             cur = [w]
     if cur: lines.append(' '.join(cur))
     return lines
+
+def karaoke_tokens_for_text(main_text):
+    """Split a subtitle line into per-word highlight tokens."""
+    clean = re.sub(r'\*\*(.*?)\*\*', r'\1', main_text or "").strip()
+    if not clean:
+        return []
+    return clean.split()
+
+
+def karaoke_step_durations(tokens, duration, boundaries):
+    """Per-token seconds: real Edge timings when counts match, else even split."""
+    n = len(tokens)
+    if n == 0:
+        return []
+    if boundaries and len(boundaries) == n:
+        total = sum(b["duration"] for b in boundaries) or duration
+        durs = [b["duration"] * duration / total for b in boundaries]
+    else:
+        durs = [duration / n] * n
+    durs = [max(0.12, d) for d in durs]
+    scale = duration / sum(durs)
+    return [d * scale for d in durs]
+
+
+def _ass_timestamp(seconds):
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = seconds % 60
+    return f"{h}:{m:02d}:{s:05.2f}"
+
+
+def write_karaoke_files(turns, audio_files, out_dir):
+    """Write word_timings.json + karaoke ASS subtitle data for the episode."""
+    out_dir = Path(out_dir)
+    t = 0.0
+    events = []
+    timings = []
+    for turn, audio in zip(turns, audio_files):
+        dur = audio["duration"]
+        tokens = karaoke_tokens_for_text(turn.get("spanish", ""))
+        steps = karaoke_step_durations(tokens, dur, audio.get("word_boundaries", []))
+        cursor = t
+        cells = []
+        for tok, d in zip(tokens, steps):
+            cells.append({"token": tok, "start": round(cursor, 3), "end": round(cursor + d, 3)})
+            cursor += d
+        timings.append({"speaker": turn["speaker"], "tokens": cells})
+        if tokens:
+            k_line = "".join("{\\k%d}%s" % (max(1, int(round(d * 100))), tok) for tok, d in zip(tokens, steps))
+            events.append(f"Dialogue: 0,{_ass_timestamp(t)},{_ass_timestamp(t + dur)},Main,,0,0,0,,{k_line}")
+        sub = (turn.get("english", "") or "").strip()
+        if sub:
+            events.append(f"Dialogue: 0,{_ass_timestamp(t)},{_ass_timestamp(t + dur)},English,,0,0,0,,{sub}")
+        t += dur
+    with open(out_dir / "word_timings.json", "w", encoding="utf-8") as f:
+        json.dump(timings, f, indent=1, ensure_ascii=False)
+    header = ("[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\n\n"
+              "[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Alignment, MarginV\n"
+              "Style: Main,Arial,64,&H0000CAF7,&H80000000,&H80000000,1,8,180\n"
+              "Style: English,Arial,40,&H00CDB4AA,&H80000000,&H80000000,0,8,120\n\n"
+              "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
+    with open(out_dir / "podcast_karaoke.ass", "w", encoding="utf-8") as f:
+        f.write(header + "\n".join(events) + "\n")
+    return out_dir / "podcast_karaoke.ass"
+
+
+def render_karaoke_preview(turns, audio_files, out_dir, max_turns=3):
+    """Burnt-in per-word highlight preview for the first turns (local check)."""
+    out_dir = Path(out_dir)
+    prev_dir = out_dir / "karaoke_preview"
+    prev_dir.mkdir(parents=True, exist_ok=True)
+    segments = []
+    for ti in range(min(max_turns, len(turns))):
+        turn = turns[ti]
+        audio = audio_files[ti]
+        tokens = karaoke_tokens_for_text(turn.get("spanish", ""))
+        if not tokens:
+            continue
+        steps = karaoke_step_durations(tokens, audio["duration"], audio.get("word_boundaries", []))
+        parts = []
+        for k in range(len(tokens)):
+            marked = " ".join(f"**{x}**" if j == k else x for j, x in enumerate(tokens))
+            step_turn = dict(turn)
+            step_turn["spanish"] = marked
+            img = prev_dir / f"t{ti:02d}_w{k:03d}.png"
+            create_frame(step_turn, str(img), ti)
+            part = prev_dir / f"t{ti:02d}_w{k:03d}.mp4"
+            subprocess.run(["ffmpeg", "-y", "-loop", "1", "-i", str(img),
+                            "-vf", f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT},fps={FPS}",
+                            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                            "-t", f"{steps[k]:.3f}", str(part)],
+                           check=True, capture_output=True)
+            parts.append(part)
+        seg = prev_dir / f"seg_{ti:02d}.mp4"
+        lst = prev_dir / f"seg_{ti:02d}.txt"
+        with open(lst, "w") as f:
+            for p in parts:
+                f.write(f"file '{p.resolve().as_posix()}'\n")
+        subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
+                        "-i", audio["path"], "-c:v", "copy", "-c:a", "aac",
+                        "-shortest", str(seg)], check=True, capture_output=True)
+        segments.append(seg)
+    preview = out_dir / "karaoke_preview.mp4"
+    lst = prev_dir / "all.txt"
+    with open(lst, "w") as f:
+        for s in segments:
+            f.write(f"file '{s.resolve().as_posix()}'\n")
+    subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
+                    "-c", "copy", str(preview)], check=True)
+    return preview
+
 
 def create_video(turns, audio_files, video_dir=None):
     if video_dir is None:
@@ -1070,6 +1229,14 @@ async def main():
     total_audio = sum(a["duration"] for a in audio_files)
     print(f"  Total audio: {total_audio/60:.1f} min")
     
+    print(f"\n[2b/4] Writing karaoke subtitle data...")
+    write_karaoke_files(turns, audio_files, video_dir)
+    if os.getenv("KARAOKE_PREVIEW_TURNS"):
+        try:
+            preview = render_karaoke_preview(turns, audio_files, video_dir, max_turns=int(os.getenv("KARAOKE_PREVIEW_TURNS", "3")))
+            print(f"  Karaoke preview: {preview}")
+        except Exception as e:
+            print(f"  Karaoke preview warn: {e}")
     print(f"\n[3/4] Creating video...")
     video_path, duration = create_video(turns, audio_files, video_dir)
     
