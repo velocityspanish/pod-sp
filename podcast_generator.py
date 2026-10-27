@@ -1084,7 +1084,7 @@ def _render_turn_segment(turn, audio, video_dir, i):
         subprocess.run(["ffmpeg", "-y", "-loop", "1", "-i", str(img), "-i", audio["path"],
             "-vf", f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT},fps={FPS}",
             "-c:v", "libx264", "-c:a", "aac", "-b:a", "128k",
-            "-pix_fmt", "yuv420p", "-preset", "medium",
+            "-pix_fmt", "yuv420p", "-preset", "veryfast",
             "-t", str(dur), "-af", f"afade=t=out:st={fade_start:.2f}:d=0.3",
             str(clip)
         ], check=True, capture_output=True)
@@ -1094,7 +1094,7 @@ def _render_turn_segment(turn, audio, video_dir, i):
         part = video_dir / f"c_{i:04d}_w{j:03d}.mp4"
         subprocess.run(["ffmpeg", "-y", "-loop", "1", "-i", str(img),
             "-vf", f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT},fps={FPS}",
-            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "medium",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
             "-t", f"{d:.3f}", str(part)], check=True, capture_output=True)
         word_clips.append(part)
     lst = video_dir / f"seg_{i:04d}.txt"
@@ -1105,7 +1105,7 @@ def _render_turn_segment(turn, audio, video_dir, i):
     fade_start = max(0.0, audio["duration"] - 0.3)
     subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
         "-i", audio["path"], "-c:v", "libx264", "-c:a", "aac", "-b:a", "128k",
-        "-pix_fmt", "yuv420p", "-preset", "medium",
+        "-pix_fmt", "yuv420p", "-preset", "veryfast",
         "-af", f"afade=t=out:st={fade_start:.2f}:d=0.3",
         "-shortest", str(clip)], check=True, capture_output=True)
     for p in word_clips:
