@@ -540,95 +540,10 @@ def generate_script():
 
 
 def configure_edge_tts():
-    """Ensure edge_tts connects to Microsoft's active endpoint to avoid 403 on cloud runners."""
-    try:
-        import edge_tts.constants
-        import edge_tts.communicate
-        token = getattr(edge_tts.constants, "TRUSTED_CLIENT_TOKEN", "6A5AA1D4EAFF4E9FB37E23D68491D6F4")
-        new_url = (
-            "wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1"
-            f"?Ocp-Apim-Subscription-Key={token}"
-        )
-        edge_tts.constants.WSS_URL = new_url
-        edge_tts.communicate.WSS_URL = new_url
-    except Exception as e:
-        pass
+    """Stock edge-tts endpoint only: forcing api.msedgeservices.com breaks runners."""
+    return None
 
 
-def _fallback_sample_rate(mp3_path):
-    try:
-        r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0",
-                            "-show_entries", "stream=sample_rate",
-                            "-of", "default=noprint_wrappers=1:nokey=1", str(mp3_path)],
-                           capture_output=True, text=True)
-        return int((r.stdout or "24000").strip().split()[0])
-    except Exception:
-        return 24000
-
-
-def _masculinize_fallback_audio(mp3_path) -> None:
-    """Pitch-shift fallback audio down so the male host stays distinct."""
-    try:
-        rate = _fallback_sample_rate(mp3_path)
-        tmp = str(mp3_path) + ".male.mp3"
-        r = subprocess.run(
-            ["ffmpeg", "-y", "-i", str(mp3_path),
-             "-af", f"asetrate={int(rate * 0.85)},aresample={rate}",
-             "-b:a", "128k", tmp],
-            capture_output=True)
-        if r.returncode == 0 and Path(tmp).exists() and Path(tmp).stat().st_size > 100:
-            os.replace(tmp, mp3_path)
-        else:
-            Path(tmp).unlink(missing_ok=True)
-    except Exception as e:
-        print(f"  masculinize fallback warn: {e}")
-
-
-def generate_google_tts(text, voice_or_lang, output_path, speaker="Host1"):
-    """Fallback TTS using Google Translate TTS if Edge TTS fails."""
-    import urllib.request
-    import urllib.parse
-
-    lang_code = "en"
-    voice_lower = str(voice_or_lang).lower()
-    if voice_lower.startswith("en"):
-        lang_code = "en"
-    elif "-" in str(voice_or_lang):
-        part = str(voice_or_lang).split("-")[0].lower()
-        if part == "zh":
-            lang_code = "zh-CN"
-        elif part == "fil":
-            lang_code = "tl"
-        elif part == "nb":
-            lang_code = "no"
-        else:
-            lang_code = part
-    else:
-        lang_code = voice_lower
-
-    clean_text = text.replace("*", "").replace("#", "").strip()
-    if not clean_text:
-        return False
-
-    try:
-        url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={urllib.parse.quote(clean_text)}&tl={lang_code}&client=tw-ob"
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            }
-        )
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = resp.read()
-        if len(data) > 200:
-            with open(output_path, "wb") as f:
-                f.write(data)
-            if speaker == "Host2":
-                _masculinize_fallback_audio(output_path)
-            return True
-    except Exception as e:
-        print(f"  Google TTS fallback error ({lang_code}): {e}")
-    return False
 
 
 async def generate_audio(turns, target_dir=None):
@@ -670,21 +585,12 @@ async def generate_audio(turns, target_dir=None):
                 if attempt < 2:
                     await asyncio.sleep(1.0)
         if not success:
-            if generate_google_tts(paused_text, voice, str(filename), speaker=turn["speaker"]):
-                engine = "google-fallback"
-                print(f"  Audio {i} recovered with Google TTS fallback")
-                success = True
-        if success:
-            try:
-                r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                    "-of", "default=noprint_wrappers=1:nokey=1", str(filename)], capture_output=True, text=True)
-                duration = float(r.stdout.strip()) if r.stdout else 3.0
-            except:
-                duration = 3.0
-        else:
-            print(f"  Audio {i} failed all TTS attempts, using fallback")
-            engine = "silence"
-            subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono", "-t", "3", str(filename)], capture_output=True)
+            raise RuntimeError(f"Edge TTS failed for turn {i} after 3 attempts; no fallback allowed")
+        try:
+            r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1", str(filename)], capture_output=True, text=True)
+            duration = float(r.stdout.strip()) if r.stdout else 3.0
+        except:
             duration = 3.0
         audio_files.append({"path": str(filename), "duration": duration, "speaker": turn["speaker"], "voice": voice, "engine": engine, "word_boundaries": word_boundaries})
         if (i + 1) % 25 == 0 or i == 0:
@@ -1153,6 +1059,61 @@ def render_karaoke_preview(turns, audio_files, out_dir, max_turns=3):
     return preview
 
 
+def _render_turn_segment(turn, audio, video_dir, i):
+    """One video segment per turn with burnt-in per-word karaoke highlight."""
+    video_dir = Path(video_dir)
+    tokens = karaoke_tokens_for_text(turn.get("spanish", ""))
+    steps = karaoke_step_durations(tokens, audio["duration"], audio.get("word_boundaries", []))
+    if not tokens:
+        img = video_dir / f"f_{i:04d}.png"
+        create_frame(turn, str(img), i)
+        parts = [(img, audio["duration"])]
+    else:
+        parts = []
+        for k in range(len(tokens)):
+            marked = " ".join(f"**{x}**" if j == k else x for j, x in enumerate(tokens))
+            step_turn = dict(turn)
+            step_turn["spanish"] = marked
+            img = video_dir / f"f_{i:04d}_w{k:03d}.png"
+            create_frame(step_turn, str(img), i)
+            parts.append((img, steps[k]))
+    if len(parts) == 1:
+        img, dur = parts[0]
+        clip = video_dir / f"c_{i:04d}.mp4"
+        fade_start = max(0.0, dur - 0.3)
+        subprocess.run(["ffmpeg", "-y", "-loop", "1", "-i", str(img), "-i", audio["path"],
+            "-vf", f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT},fps={FPS}",
+            "-c:v", "libx264", "-c:a", "aac", "-b:a", "128k",
+            "-pix_fmt", "yuv420p", "-preset", "medium",
+            "-t", str(dur), "-af", f"afade=t=out:st={fade_start:.2f}:d=0.3",
+            str(clip)
+        ], check=True, capture_output=True)
+        return clip
+    word_clips = []
+    for j, (img, d) in enumerate(parts):
+        part = video_dir / f"c_{i:04d}_w{j:03d}.mp4"
+        subprocess.run(["ffmpeg", "-y", "-loop", "1", "-i", str(img),
+            "-vf", f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT},fps={FPS}",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "medium",
+            "-t", f"{d:.3f}", str(part)], check=True, capture_output=True)
+        word_clips.append(part)
+    lst = video_dir / f"seg_{i:04d}.txt"
+    with open(lst, "w") as f:
+        for p in word_clips:
+            f.write(f"file '{p.resolve().as_posix()}'\n")
+    clip = video_dir / f"c_{i:04d}.mp4"
+    fade_start = max(0.0, audio["duration"] - 0.3)
+    subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
+        "-i", audio["path"], "-c:v", "libx264", "-c:a", "aac", "-b:a", "128k",
+        "-pix_fmt", "yuv420p", "-preset", "medium",
+        "-af", f"afade=t=out:st={fade_start:.2f}:d=0.3",
+        "-shortest", str(clip)], check=True, capture_output=True)
+    for p in word_clips:
+        p.unlink(missing_ok=True)
+    lst.unlink(missing_ok=True)
+    return clip
+
+
 def create_video(turns, audio_files, video_dir=None):
     if video_dir is None:
         video_dir = OUTPUT_DIR / f"podcast_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -1163,21 +1124,8 @@ def create_video(turns, audio_files, video_dir=None):
     total_dur = 0
     
     for i, (turn, audio) in enumerate(zip(turns, audio_files)):
-        img = video_dir / f"f_{i:04d}.png"
-        create_frame(turn, str(img), i)
-        clip = video_dir / f"c_{i:04d}.mp4"
+        clip = _render_turn_segment(turn, audio, video_dir, i)
         clips.append(clip)
-        dur = audio["duration"]
-        
-        # Fade out only in the last 0.3s of the clip so the full voice is audible
-        fade_start = max(0.0, dur - 0.3)
-        subprocess.run(["ffmpeg", "-y", "-loop", "1", "-i", str(img), "-i", audio["path"],
-            "-vf", f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT},fps={FPS}",
-            "-c:v", "libx264", "-c:a", "aac", "-b:a", "128k",
-            "-pix_fmt", "yuv420p", "-preset", "medium",
-            "-t", str(dur), "-af", f"afade=t=out:st={fade_start:.2f}:d=0.3",
-            str(clip)
-        ], check=True, capture_output=True)
         
         total_dur += audio["duration"]
         if (i + 1) % 25 == 0:
