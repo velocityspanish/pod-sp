@@ -582,8 +582,12 @@ async def generate_audio(turns, target_dir=None):
                     break
             except Exception as e:
                 print(f"  Audio {i} attempt {attempt+1}/3 failed: {e}")
-                if attempt < 2:
-                    await asyncio.sleep(1.0)
+                if attempt == 0:
+                    print(f"  Audio {i} waiting 15s before retry...")
+                    await asyncio.sleep(15.0)
+                elif attempt == 1:
+                    print(f"  Audio {i} waiting 45s before final retry...")
+                    await asyncio.sleep(45.0)
         if not success:
             raise RuntimeError(f"Edge TTS failed for turn {i} after 3 attempts; no fallback allowed")
         try:
